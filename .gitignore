@@ -1,0 +1,86 @@
+# Global
+.DS_Store
+Thumbs.db
+*.log
+*.out
+*.err
+logs/
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+
+# Node/JS (frontend + backend)
+**/node_modules/
+**/.eslintcache
+**/.cache/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build artifacts
+dist/
+build/
+**/dist/
+**/build/
+**/.vite/
+frontend/dist/
+frontend/.vite/
+frontend/.cache/
+backend/.cache/
+backend/logs/
+
+# Python
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+ENV/
+.python-version
+.pytest_cache/
+**/.pytest_cache/
+.mypy_cache/
+**/.mypy_cache/
+.pytype/
+.pyre/
+
+# Notebooks
+.ipynb_checkpoints/
+**/.ipynb_checkpoints/
+
+# Data & Models (large/binary)
+data/raw/
+data/processed/
+saved_models/**
+!saved_models/.gitkeep
+*.pt
+*.h5
+*.ckpt
+*.onnx
+*.safetensors
+*.tflite
+*.pb
+*.weights
+
+# Coverage / test
+coverage/
+htmlcov/
+.coverage*
+.tox/
+
+# Env files
+.env
+.env.*
+!.env.example
+
+# Docker overrides
+docker-compose.override.yml

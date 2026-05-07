@@ -1,0 +1,61 @@
+# training/configs/cnn_config.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+# MoodSyncAI — CNN / ResNet50V2 training configuration
+# All values mirror the notebook 1_Face-emotion-detection.ipynb
+# ─────────────────────────────────────────────────────────────────────────────
+
+model:
+  architecture: resnet50v2          # "resnet50v2" | "custom_cnn"
+  num_classes: 7
+  img_shape: 224                    # ResNet50V2 canonical input
+  dropout_rate: 0.25                # applied after each block
+  dense_units: [64]                 # post-backbone FC layers before head
+
+data:
+  train_dir: data/raw/train
+  test_dir:  data/raw/test
+  batch_size: 64
+  augmentation:
+    rotation_range: 10
+    zoom_range: 0.2
+    width_shift_range: 0.1
+    height_shift_range: 0.1
+    horizontal_flip: true
+    fill_mode: nearest
+
+training:
+  epochs: 30
+  optimizer: adam
+  learning_rate: 0.001
+  loss: categorical_crossentropy
+  metrics: [accuracy]
+
+callbacks:
+  checkpoint:
+    path: saved_models/resnet50v2_checkpoint.keras
+    monitor: val_accuracy
+    save_best_only: true
+    verbose: 1
+  early_stopping:
+    monitor: val_accuracy
+    patience: 7
+    restore_best_weights: true
+    verbose: 1
+  reduce_lr_on_plateau:
+    monitor: val_loss
+    factor: 0.2
+    patience: 2
+    verbose: 1
+
+output:
+  save_path: saved_models/cnn_emotion.keras
+  export_path: saved_models/cnn_emotion.pt   # PyTorch-style alias (if exporting)
+
+emotion_classes:
+  - angry
+  - disgust
+  - fear
+  - happy
+  - neutral
+  - sad
+  - surprise

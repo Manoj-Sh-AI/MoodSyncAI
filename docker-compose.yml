@@ -1,0 +1,77 @@
+services:
+  py_service:
+    build: ./py_service
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./saved_models:/app/saved_models:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://py_service:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+    develop:
+      watch:
+        # Sync Python source instantly; don't rebuild the image on each change
+        - action: sync+restart
+          path: ./py_service
+          target: /app
+          ignore:
+            - requirements.txt
+            - Dockerfile
+            - saved_models/**
+        # Only rebuild when dependencies or Dockerfile change
+        - action: rebuild
+          path: ./py_service/requirements.txt
+        - action: rebuild
+          path: ./py_service/Dockerfile
+    networks:
+      - app-network
+  backend:
+    build: ./backend
+    environment:
+      - PY_SERVICE_URL=http://py_service:8001
+      - CORS_ORIGIN=*
+    ports:
+      - "8080:8080"
+    depends_on:
+      py_service:
+        condition: service_healthy
+    restart: unless-stopped
+    develop:
+      watch:
+        # Sync source and restart quickly; avoid npm install on each change
+        - action: sync+restart
+          path: ./backend/src
+          target: /app/src
+        # Rebuild only when dependency manifests change
+        - action: rebuild
+          path: ./backend/package.json
+        - action: rebuild
+          path: ./backend/package-lock.json
+    networks:
+      - app-network
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        - VITE_API_URL=http://localhost:8080
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    develop:
+      watch:
+        # Keep rebuild for frontend since it's a static Nginx image.
+        - action: rebuild
+          path: ./frontend
+    networks:
+      - app-network
+# Frontend is best built separately and served via CDN or a static host.
+
+networks:
+  app-network:
+    driver: bridge

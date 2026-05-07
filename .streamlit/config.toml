@@ -1,0 +1,12 @@
+[server]
+# Relax protections for local development to avoid 403 on uploads
+enableXsrfProtection = false
+enableCORS = false
+maxUploadSize = 50  # MB; adjust as needed
+
+# If running behind a proxy, set baseUrlPath accordingly
+# baseUrlPath = ""
+
+[browser]
+serverAddress = "localhost"
+serverPort = 8501

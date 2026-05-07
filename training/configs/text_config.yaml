@@ -1,0 +1,47 @@
+# training/configs/text_config.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+# MoodSyncAI — RoBERTa sentiment model configuration
+# Mirrors 2_text_model_experiments.ipynb
+# The model is pre-trained — this config governs inference & optional fine-tuning
+# ─────────────────────────────────────────────────────────────────────────────
+
+model:
+  model_id: cardiffnlp/twitter-roberta-base-sentiment-latest
+  num_labels: 3
+  max_len: 128              # sufficient for spoken sentences; RoBERTa max = 512
+  device: auto              # "cuda" | "cpu" | "auto"
+
+labels:
+  0: negative
+  1: neutral
+  2: positive
+
+# Visual→text fusion mapping (7 → 3 classes)
+visual_to_text_mapping:
+  happy:    positive
+  surprise: positive
+  neutral:  neutral
+  angry:    negative
+  disgust:  negative
+  fear:     negative
+  sad:      negative
+
+inference:
+  batch_size: 64
+  apply_preprocessing: true   # @user / http replacement
+
+save:
+  save_dir: saved_models/roberta_sentiment
+  tokenizer: true
+  model: true
+  config: true
+
+# Optional fine-tuning (not used in assignment — model is already fine-tuned)
+fine_tuning:
+  enabled: false
+  dataset: tweeteval
+  epochs: 3
+  learning_rate: 2.0e-5
+  optimizer: adamw
+  warmup_steps: 500
+  weight_decay: 0.01

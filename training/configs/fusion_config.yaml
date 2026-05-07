@@ -1,0 +1,42 @@
+# training/configs/fusion_config.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+# MoodSyncAI — Fusion layer configuration
+# Covers both weighted-average (default) and optional learned fusion
+# ─────────────────────────────────────────────────────────────────────────────
+
+fusion:
+  strategy: weighted_average        # "weighted_average" | "learned_mlp"
+  visual_weight: 0.6                # weight for ResNet50V2 (3-class mapped) output
+  text_weight: 0.4                  # weight for RoBERTa output
+  # weights must sum to 1.0
+
+  # Learned MLP fusion (optional — set strategy: learned_mlp to activate)
+  mlp:
+    hidden_units: [64, 32]
+    dropout_rate: 0.3
+    activation: relu
+    output_activation: softmax
+
+mismatch:
+  # Confidence thresholds for severity classification
+  soft_threshold: 0.25              # |visual_conf - text_conf| > this → SOFT_MISMATCH
+  hard_threshold: 0.50              # |visual_conf - text_conf| > this → HARD_MISMATCH
+  # Polarity inversion (e.g. visual=happy, text=negative) always triggers HARD_MISMATCH
+  polarity_inversion: true
+
+labels:
+  - negative
+  - neutral
+  - positive
+
+training:                           # only used when strategy = learned_mlp
+  dataset: data/processed/fusion_train.csv
+  epochs: 20
+  batch_size: 32
+  optimizer: adam
+  learning_rate: 0.001
+  loss: categorical_crossentropy
+  metrics: [accuracy]
+
+output:
+  save_path: saved_models/fusion_net.pt
