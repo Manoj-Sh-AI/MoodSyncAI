@@ -1,6 +1,7 @@
 from __future__ import annotations
 import io
 import json
+import re
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
@@ -77,6 +78,7 @@ async def _health():
 # ── Lazy pipelines ────────────────────────────────────────────────────────────
 _visual_pipe = None
 _text_pipe = None
+_summary_pipe = None
 _audio_model: Optional[nn.Module] = None
 _audio_le = None
 _audio_meta: Optional[dict] = None
@@ -134,6 +136,19 @@ def _load_text_pipe():
             device=-1,
         )
     return _text_pipe
+
+
+def _load_summary_pipe():
+    global _summary_pipe
+    if _summary_pipe is None:
+        from transformers import pipeline
+
+        _summary_pipe = pipeline(
+            "text2text-generation",
+            model="google/flan-t5-base",
+            device=-1,
+        )
+    return _summary_pipe
 
 
 # ── Audio helpers ───────────────────────────────────────────────────────────
@@ -628,32 +643,92 @@ def run_video_inference(video_bytes: bytes) -> Dict[str, Any]:
 def generate_summary(
     visual_result: dict, text_result: dict, fusion: dict, text_input: str
 ) -> str:
-    v_label = str(visual_result["top_label"]).capitalize()
-    v_score = visual_result["top_score"]
-    t_label = str(text_result["top_label"]).capitalize()
-    t_score = text_result["top_score"]
+    v_label = str(visual_result["top_label"]).lower()
+    v_score = float(visual_result["top_score"])
+    t_label = str(text_result["top_label"]).lower()
+    t_score = float(text_result["top_score"])
     match_type = fusion.get("match_type", "Not Applicable")
+    dominant_emotion = str(fusion.get("dominant_emotion", "unknown")).lower()
+    mismatch = bool(fusion.get("mismatch", False))
+    fused_confidence = float(fusion.get("fused_confidence", 0.0))
+    cleaned_text = " ".join(text_input.split())
 
-    summary_parts = {
-        "Hard Match": (
-            f"A strong and consistent emotional state of {fusion['dominant_emotion'].lower()} has been detected. "
-            f"Both facial cues ({v_label}, {v_score}%) and verbal content ({t_label}, {t_score}%) are in perfect alignment."
-        ),
-        "Soft Match": (
-            f"A consistent emotional polarity has been detected, with related emotions of {v_label.lower()} from facial cues and {t_label.lower()} from text. "
-            f"This suggests a nuanced emotional state, confidently assessed as {fusion['dominant_emotion'].lower()}."
-        ),
-        "Soft Mismatch": (
-            f"There is a potential mismatch between the facial expression ({v_label}, {v_score}%) and the verbal content ({t_label}, {t_score}%). "
-            "However, low confidence in at least one of the signals suggests emotional ambiguity rather than a definite conflict. The situation is unclear."
-        ),
-        "Hard Mismatch": (
-            f"A significant conflict has been detected between the speaker's facial expression ({v_label}, {v_score}%) and their verbal content ({t_label}, {t_score}%). "
-            "This strong incongruence suggests the individual may be masking or suppressing their true emotional state."
-        ),
-    }
+    fallback = (
+        f"[fallback] The analysis points to a mostly {dominant_emotion} emotional state. "
+        + (
+            "The facial and verbal signals do not fully agree, so the result may reflect emotional tension or uncertainty."
+            if mismatch
+            else "The facial and verbal signals are broadly aligned, suggesting a consistent emotional presentation."
+        )
+    )
 
-    return summary_parts.get(match_type, "Fusion analysis could not be completed.")
+    analysis_context = (
+        f"A person said, \"{cleaned_text or 'No text provided.'}\". "
+        f"Their facial expression was read as {v_label} with {v_score:.1f}% confidence, "
+        f"while the text was read as {t_label} with {t_score:.1f}% confidence. "
+        f"The combined result leans toward {dominant_emotion} with {fused_confidence:.1f}% overall confidence. "
+        f"The relationship between the signals is described as {match_type.lower()}, "
+        f"and mismatch is {'present' if mismatch else 'not present'}."
+    )
+
+    prompt = (
+        "Read the emotional analysis and share your thoughts about what it may mean. "
+        "Write exactly 2 short complete sentences in natural language, as if you are reflecting on the result for a user. "
+        "Do not repeat the analysis fields verbatim, do not use labels, and do not list scores mechanically. "
+        "Each sentence should be concise and fully finished. You may mention uncertainty if the signals are mixed.\n\n"
+        f"{analysis_context}\n\n"
+        "Your interpretation:"
+    )
+
+    try:
+        pipe = _load_summary_pipe()
+        outputs = pipe(
+            prompt,
+            max_new_tokens=80,
+            do_sample=True,
+            temperature=0.8,
+            top_p=0.9,
+            truncation=True,
+        )
+        generated = outputs[0].get("generated_text", "").strip()
+        if generated:
+            cleaned_generated = " ".join(generated.split())
+            blocked_prefixes = (
+                "facial emotion:",
+                "text emotion:",
+                "fusion dominant emotion:",
+                "fusion confidence:",
+                "match type:",
+                "mismatch detected:",
+                "person message:",
+                "summary:",
+                "spoken text:",
+                "facial signal suggests",
+                "text signal suggests",
+                "combined dominant emotion:",
+                "overall confidence:",
+                "relationship between signals:",
+                "mismatch present:",
+                "response:",
+                "consistent emotional state",
+                "incongruence detected",
+            )
+            lowered = cleaned_generated.lower()
+            if not lowered.startswith(blocked_prefixes):
+                sentences = re.split(r"(?<=[.!?])\s+", cleaned_generated)
+                complete_sentences = [
+                    sentence.strip()
+                    for sentence in sentences
+                    if sentence.strip() and sentence.strip()[-1] in ".!?"
+                ]
+                if len(complete_sentences) >= 2:
+                    return " ".join(complete_sentences[:2])
+                if len(complete_sentences) == 1:
+                    return complete_sentences[0]
+    except Exception as exc:
+        print(f"[summary] generative summary failed, using fallback: {exc}")
+
+    return fallback
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
