@@ -1,6 +1,8 @@
 services:
   py_service:
     build: ./py_service
+    # Enable FastAPI auto-reload so file syncs reflect live without rebuilds
+    command: uvicorn app:app --host 0.0.0.0 --port 8001 --reload
     ports:
       - "8001:8001"
     volumes:
@@ -14,14 +16,17 @@ services:
       start_period: 90s
     develop:
       watch:
-        # Sync Python source instantly; don't rebuild the image on each change
-        - action: sync+restart
+        # Sync Python source instantly; let uvicorn --reload pick up changes
+        - action: sync
           path: ./py_service
           target: /app
           ignore:
             - requirements.txt
             - Dockerfile
             - saved_models/**
+            - "**/__pycache__/**"
+            - "**/*.pyc"
+            - ".venv/**"
         # Only rebuild when dependencies or Dockerfile change
         - action: rebuild
           path: ./py_service/requirements.txt
@@ -65,13 +70,49 @@ services:
     restart: unless-stopped
     develop:
       watch:
-        # Keep rebuild for frontend since it's a static Nginx image.
+        # Rebuild only when dependency manifests or Dockerfile change
         - action: rebuild
-          path: ./frontend
+          path: ./frontend/package.json
+        - action: rebuild
+          path: ./frontend/package-lock.json
+        - action: rebuild
+          path: ./frontend/Dockerfile
     networks:
       - app-network
 # Frontend is best built separately and served via CDN or a static host.
 
+  ### Optional: Dev server for instant HMR without rebuilds
+  ### Usage: stop the 'frontend' service first to avoid port conflicts
+  ###   docker compose stop frontend && docker compose up -d frontend_dev
+  ###   docker compose watch
+  frontend_dev:
+    image: node:18-alpine
+    working_dir: /app
+    environment:
+      - VITE_API_URL=http://backend:8080
+    command: sh -c "npm ci && npm run dev -- --host 0.0.0.0 --port 5173"
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    depends_on:
+      - backend
+    restart: unless-stopped
+    develop:
+      watch:
+        - action: sync
+          path: ./frontend
+          target: /app
+          ignore:
+            - "node_modules/**"
+            - "dist/**"
+            - ".git/**"
+    networks:
+      - app-network
 networks:
   app-network:
     driver: bridge
+
+volumes:
+  frontend_node_modules:

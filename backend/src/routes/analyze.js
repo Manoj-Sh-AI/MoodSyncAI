@@ -127,7 +127,7 @@ router.post("/video", uploadVideo.single("video"), async (req, res) => {
 
     const response = await axios.post(`${PY_SERVICE_URL}/analyze_video`, form, {
       headers: form.getHeaders(),
-      timeout: Number(process.env.PY_SERVICE_TIMEOUT_MS || 180000),
+      timeout: Number(process.env.PY_SERVICE_VIDEO_TIMEOUT_MS || 600000), // 10-minute timeout
       maxContentLength: Infinity,
       maxBodyLength: Infinity,
     });

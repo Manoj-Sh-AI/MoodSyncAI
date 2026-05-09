@@ -12,6 +12,7 @@ from PIL import Image
 import librosa
 import soundfile as sf
 import torch
+import torch
 import torch.nn as nn
 import torchvision.transforms as T
 from torchvision.models.video import r3d_18
@@ -101,20 +102,32 @@ def _load_visual_pipe():
 def _load_text_pipe():
     global _text_pipe
     if _text_pipe is None:
-        from transformers import pipeline
+        from transformers import (
+            pipeline,
+            AutoModelForSequenceClassification,
+            AutoTokenizer,
+        )
 
         if LOCAL_TEXT_MODEL_DIR.exists():
             try:
+                # Explicitly load model and tokenizer to ensure local files are used,
+                # including model.safetensors.
+                model = AutoModelForSequenceClassification.from_pretrained(
+                    str(LOCAL_TEXT_MODEL_DIR)
+                )
+                tokenizer = AutoTokenizer.from_pretrained(str(LOCAL_TEXT_MODEL_DIR))
                 _text_pipe = pipeline(
                     "text-classification",
-                    model=str(LOCAL_TEXT_MODEL_DIR),
-                    tokenizer=str(LOCAL_TEXT_MODEL_DIR),
+                    model=model,
+                    tokenizer=tokenizer,
                     top_k=None,
                     device=-1,
                 )
                 return _text_pipe
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"Warning: Failed to load local text model: {e}")
+                pass  # Fallback to public model
+
         _text_pipe = pipeline(
             "text-classification",
             model="j-hartmann/emotion-english-distilroberta-base",
@@ -352,39 +365,66 @@ def run_text_inference(text: str) -> Dict[str, Any]:
 def fuse(
     visual_result: dict,
     text_result: dict,
-    audio_result: dict = None,
+    audio_result: dict | None = None,
     visual_weight: float = 0.55,
     audio_weight: float = 0.2,
+    confidence_threshold: float = 0.4,
 ) -> Dict[str, Any]:
+    """
+    Fuses analytical results from different modalities into a summary.
+
+    This function now computes a more nuanced fusion 'match_type':
+    - Hard Match: Polarities and top emotions are the same.
+    - Soft Match: Polarities are the same, but top emotions differ.
+    - Soft Mismatch: Polarities differ, but one confidence is low.
+    - Hard Mismatch: Polarities differ, and all confidences are high.
+    """
     v_pol = _polarity(visual_result["top_label"], "visual")
     t_pol = _polarity(text_result["top_label"], "text")
     a_pol = _polarity(audio_result["top_label"], "audio") if audio_result else "neutral"
 
-    mismatch = (v_pol != t_pol or v_pol != a_pol or t_pol != a_pol) and (
-        "neutral" not in (v_pol, t_pol, a_pol)
-    )
-
-    t_weight = 1.0 - visual_weight - audio_weight
     v_conf = float(visual_result["top_score"]) / 100.0
     t_conf = float(text_result["top_score"]) / 100.0
     a_conf = float(audio_result["top_score"]) / 100.0 if audio_result else 0.0
 
+    # Determine match type based on the two most dominant modalities (visual and text)
+    match_type = "Not Applicable"
+    if v_pol == t_pol:
+        if visual_result["top_label"] == text_result["top_label"]:
+            match_type = "Hard Match"
+        else:
+            match_type = "Soft Match"
+    else:
+        if v_conf < confidence_threshold or t_conf < confidence_threshold:
+            match_type = "Soft Mismatch"
+        else:
+            match_type = "Hard Mismatch"
+
+    mismatch = "Mismatch" in match_type
+
+    # Weighted average for fused confidence
+    t_weight = 1.0 - visual_weight - audio_weight
     fused_conf = round(
         (visual_weight * v_conf + t_weight * t_conf + audio_weight * a_conf) * 100, 1
     )
 
-    dominant = visual_result["top_label"]
-    if t_conf > v_conf and t_conf > a_conf:
-        dominant = text_result["top_label"]
-    elif a_conf > v_conf and a_conf > t_conf:
-        dominant = audio_result["top_label"]
+    # Determine dominant emotion based on weighted confidence
+    weighted_scores = {
+        visual_result["top_label"]: v_conf * visual_weight,
+        text_result["top_label"]: t_conf * t_weight,
+    }
+    if audio_result:
+        weighted_scores[audio_result["top_label"]] = a_conf * audio_weight
+
+    dominant_emotion = max(weighted_scores, key=weighted_scores.get)
 
     return {
         "mismatch": mismatch,
+        "match_type": match_type,
         "visual_polarity": v_pol,
         "text_polarity": t_pol,
         "audio_polarity": a_pol,
-        "dominant_emotion": dominant,
+        "dominant_emotion": dominant_emotion,
         "fused_confidence": fused_conf,
         # optional fields to support donut chart
         "visual_confidence": round(v_conf * 100, 1),
@@ -549,11 +589,18 @@ def run_video_inference(video_bytes: bytes) -> Dict[str, Any]:
     size = int(meta.get("img_size", 112))
     transform = _build_video_transform(size)
     import tempfile
+    import os
 
-    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=True) as tmp:
-        tmp.write(video_bytes)
-        tmp.flush()
-        frames = _video_decode_frames_cv2(tmp.name, num_frames)
+    # Create a temp file, ensuring it's closed before use on Windows
+    fp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+    video_path = fp.name
+    try:
+        fp.write(video_bytes)
+        fp.close()  # Close the file so OpenCV can open it
+        frames = _video_decode_frames_cv2(video_path, num_frames)
+    finally:
+        os.unlink(video_path)  # Manually delete the file
+
     if not frames:
         raise HTTPException(status_code=400, detail="Invalid or unreadable video file")
     indices = np.linspace(0, len(frames) - 1, num_frames, dtype=int)
@@ -586,23 +633,28 @@ def generate_summary(
     v_score = visual_result["top_score"]
     t_label = str(text_result["top_label"]).capitalize()
     t_score = text_result["top_score"]
-    mismatch = bool(fusion["mismatch"])  # noqa: F841 (kept for clarity)
+    match_type = fusion.get("match_type", "Not Applicable")
 
-    if fusion["mismatch"]:
-        return (
-            f"Despite expressing a {t_label.lower()} emotional tone verbally "
-            f"(confidence: {t_score}%), the speaker's facial cues indicate "
-            f"{v_label.lower()} (confidence: {v_score}%). "
-            f"This incongruence between verbal and non-verbal signals is worth noting — "
-            f"the individual may be masking or suppressing their true emotional state."
-        )
-    else:
-        return (
-            f"Both facial expression ({v_label}, {v_score}% confidence) and verbal tone "
-            f"({t_label}, {t_score}% confidence) are aligned, suggesting a consistent "
-            f"emotional state of {fusion['dominant_emotion'].lower()}. "
-            f"No significant incongruence was detected between modalities."
-        )
+    summary_parts = {
+        "Hard Match": (
+            f"A strong and consistent emotional state of {fusion['dominant_emotion'].lower()} has been detected. "
+            f"Both facial cues ({v_label}, {v_score}%) and verbal content ({t_label}, {t_score}%) are in perfect alignment."
+        ),
+        "Soft Match": (
+            f"A consistent emotional polarity has been detected, with related emotions of {v_label.lower()} from facial cues and {t_label.lower()} from text. "
+            f"This suggests a nuanced emotional state, confidently assessed as {fusion['dominant_emotion'].lower()}."
+        ),
+        "Soft Mismatch": (
+            f"There is a potential mismatch between the facial expression ({v_label}, {v_score}%) and the verbal content ({t_label}, {t_score}%). "
+            "However, low confidence in at least one of the signals suggests emotional ambiguity rather than a definite conflict. The situation is unclear."
+        ),
+        "Hard Mismatch": (
+            f"A significant conflict has been detected between the speaker's facial expression ({v_label}, {v_score}%) and their verbal content ({t_label}, {t_score}%). "
+            "This strong incongruence suggests the individual may be masking or suppressing their true emotional state."
+        ),
+    }
+
+    return summary_parts.get(match_type, "Fusion analysis could not be completed.")
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────

@@ -50,7 +50,7 @@ export async function analyzeVideo({ video, text, visual_weight }) {
   try {
     const res = await axios.post(`${BASE_URL}/api/analyze/video`, form, {
       headers: { "Content-Type": "multipart/form-data" },
-      timeout: 120000,
+      timeout: 600000, // 10-minute timeout to match the backend
     });
     return res.data;
   } catch (err) {
