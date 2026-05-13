@@ -4,6 +4,14 @@
 
 This system is designed to run in three separate terminals during local development. Start the services in the order below.
 
+<table>
+  <tr>
+    <td><img src="docs/Screenshot 2026-05-09 151644.png" alt="Screenshot 1" width="400"/></td>
+    <td><img src="docs/Screenshot 2026-05-09 151736.png" alt="Screenshot 2" width="400"/></td>
+    <td><img src="docs/Screenshot 2026-05-09 151843.png" alt="Screenshot 3" width="400"/></td>
+  </tr>
+</table>
+
 ### Prerequisites
 
 - Python 3.10 recommended
